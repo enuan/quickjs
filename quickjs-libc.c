@@ -437,6 +437,50 @@ uint8_t *js_load_file(JSContext *ctx, size_t *pbuf_len, const char *filename)
     return buf;
 }
 
+/* source map loader (see JS_SetSourceMapLoaderFunc()): 'url' is a path or
+   a file:// URL, relative URLs are resolved against the directory of
+   'filename'. Errors are ignored. */
+void js_std_source_map_loader(JSContext *ctx, const char *filename,
+                              const char *url, void *opaque)
+{
+    DynBuf dbuf;
+    const char *slash, *p;
+    uint8_t *buf;
+    size_t buf_len;
+
+    if (!strncmp(url, "file://", 7)) {
+        url += 7;
+        /* "file://localhost/path" or "file:///path" */
+        if (url[0] != '/') {
+            url = strchr(url, '/');
+            if (!url)
+                return;
+        }
+    } else {
+        /* other URL schemes are not supported */
+        for(p = url; *p && *p != '/'; p++) {
+            if (*p == ':')
+                return;
+        }
+    }
+    dbuf_init(&dbuf);
+    if (url[0] != '/') {
+        slash = strrchr(filename, '/');
+        if (slash)
+            dbuf_put(&dbuf, (const uint8_t *)filename, slash - filename + 1);
+    }
+    dbuf_putstr(&dbuf, url);
+    if (dbuf_putc(&dbuf, '\0') == 0) {
+        buf = js_load_file(NULL, &buf_len, (char *)dbuf.buf);
+        if (buf) {
+            JS_SetSourceMap(JS_GetRuntime(ctx), filename, (char *)buf, buf_len,
+                            (char *)dbuf.buf);
+            free(buf);
+        }
+    }
+    dbuf_free(&dbuf);
+}
+
 /* load and evaluate a file */
 static JSValue js_loadScript(JSContext *ctx, JSValueConst this_val,
                              int argc, JSValueConst *argv)

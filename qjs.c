@@ -49,6 +49,7 @@ extern const uint32_t qjsc_repl_size;
 #ifdef CONFIG_TEMPORAL_INTL
 static int enable_experimental = 0;
 #endif
+static int enable_source_map = 0;
 
 static int eval_buf(JSContext *ctx, const void *buf, int buf_len,
                     const char *filename, int eval_flags)
@@ -317,6 +318,7 @@ void help(void)
            "    --no-unhandled-rejection  ignore unhandled promise rejections\n"
            "-s                    strip all the debug info\n"
            "    --strip-source    strip the source code\n"
+           "    --source-map      use the source maps of the loaded scripts and modules\n"
 #ifdef CONFIG_TEMPORAL_INTL
            "    --experimental    enable experimental Temporal and Intl support\n"
 #endif
@@ -422,6 +424,10 @@ int main(int argc, char **argv)
                 load_std = 1;
                 continue;
             }
+            if (!strcmp(longopt, "source-map")) {
+                enable_source_map = 1;
+                continue;
+            }
             if (!strcmp(longopt, "no-unhandled-rejection")) {
                 dump_unhandled_promise_rejection = 0;
                 continue;
@@ -484,6 +490,10 @@ int main(int argc, char **argv)
     if (stack_size != 0)
         JS_SetMaxStackSize(rt, stack_size);
     JS_SetStripInfo(rt, strip_flags);
+    if (enable_source_map) {
+        JS_SetSourceMapFlags(rt, JS_SOURCE_MAP_INLINE);
+        JS_SetSourceMapLoaderFunc(rt, js_std_source_map_loader, NULL);
+    }
     js_std_set_worker_new_context_func(JS_NewCustomContext);
     js_std_init_handlers(rt);
     ctx = JS_NewCustomContext(rt);
