@@ -22514,7 +22514,8 @@ static int get_line_col(int *pcol_num, const uint8_t *buf, size_t len)
             line_num++;
             col_num = 0;
         } else if (c < 0x80 || c >= 0xc0) {
-            col_num++;
+            /* UTF-16 code units, as in JS strings and source maps */
+            col_num += (c >= 0xf0) ? 2 : 1;
         }
     }
     *pcol_num = col_num;
@@ -22545,7 +22546,7 @@ static int get_line_col_cached(GetLineColCache *s, int *pcol_num, const uint8_t 
                 if (*p == '\n') {
                     break;
                 } else if (*p < 0x80 || *p >= 0xc0) {
-                    col_num++;
+                    col_num += (*p >= 0xf0) ? 2 : 1;
                 }
             }
             s->col_num = col_num;
