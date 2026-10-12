@@ -257,7 +257,7 @@ endif
 
 all: $(OBJDIR) $(OBJDIR)/quickjs.check.o $(OBJDIR)/qjs.check.o $(PROGS)
 
-QJS_LIB_OBJS=$(OBJDIR)/quickjs.o $(OBJDIR)/dtoa.o $(OBJDIR)/libregexp.o $(OBJDIR)/libunicode.o $(OBJDIR)/cutils.o $(OBJDIR)/quickjs-libc.o
+QJS_LIB_OBJS=$(OBJDIR)/quickjs.o $(OBJDIR)/quickjs-sourcemap.o $(OBJDIR)/dtoa.o $(OBJDIR)/libregexp.o $(OBJDIR)/libunicode.o $(OBJDIR)/cutils.o $(OBJDIR)/quickjs-libc.o
 ifdef CONFIG_TEMPORAL_INTL
 QJS_LIB_OBJS+=$(addprefix $(OBJDIR)/intl/, intl.o locale.o locale-data.o numberformat.o collator.o datetimeformat.o pluralrules.o listformat.o relativetimeformat.o displaynames.o segmenter.o durationformat.o)
 QJS_LIB_OBJS+=$(addprefix $(OBJDIR)/temporal/, temporal.o instant.o duration.o plaintime.o now.o plaindate.o plaindatetime.o plainyearmonth.o plainmonthday.o zoneddatetime.o calendar.o timezone.o tzdata_generated.o)
@@ -342,6 +342,9 @@ endif
 run-test262$(EXE): $(OBJDIR)/run-test262.o $(QJS_LIB_OBJS)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)
 
+tests/test_source_map$(EXE): $(OBJDIR)/tests/test_source_map.o $(QJS_LIB_OBJS)
+	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)
+
 run-test262-debug: $(patsubst %.o, %.debug.o, $(OBJDIR)/run-test262.o $(QJS_LIB_OBJS))
 	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)
 
@@ -381,7 +384,7 @@ clean:
 	rm -f repl.c out.c
 	rm -f *.a *.o *.d *~ unicode_gen regexp_test fuzz_eval fuzz_compile fuzz_regexp $(PROGS)
 	rm -f hello.c test_fib.c
-	rm -f examples/*.so tests/*.so
+	rm -f examples/*.so tests/*.so tests/test_source_map$(EXE)
 	rm -rf $(OBJDIR)/ *.dSYM/ qjs-debug$(EXE)
 	rm -rf run-test262-debug$(EXE)
 	rm -f run_octane run_sunspider_like
@@ -464,7 +467,8 @@ ifdef CONFIG_SHARED_LIBS
 test: tests/bjson.so examples/point.so
 endif
 
-test: qjs$(EXE)
+test: qjs$(EXE) tests/test_source_map$(EXE)
+	$(WINE) ./tests/test_source_map$(EXE)
 	$(WINE) ./qjs$(EXE) tests/test_closure.js
 	$(WINE) ./qjs$(EXE) tests/test_language.js
 	$(WINE) ./qjs$(EXE) --std tests/test_builtin.js

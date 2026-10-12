@@ -29,3 +29,4 @@ unicode_gen
 run_octane
 run_sunspider_like
 libwinpthread*.dll
+tests/test_source_map

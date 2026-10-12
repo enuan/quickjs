@@ -46,6 +46,7 @@
 #include "libregexp.h"
 #include "libunicode.h"
 #include "dtoa.h"
+#include "quickjs-sourcemap.h"
 
 #define OPTIMIZE         1
 #define SHORT_OPCODES    1
@@ -381,6 +382,11 @@ struct JSRuntime {
     JSSharedArrayBufferFunctions sab_funcs;
     /* see JS_SetStripInfo() */
     uint8_t strip_flags;
+    /* see JS_SetSourceMap() */
+    uint8_t source_map_flags;
+    JSSourceMapRegistry *source_maps;
+    JSSourceMapLoaderFunc *source_map_loader;
+    void *source_map_loader_opaque;
     
     /* Shape hash table */
     int shape_hash_bits;
@@ -2280,6 +2286,79 @@ int JS_GetStripInfo(JSRuntime *rt)
     return rt->strip_flags;
 }
 
+int JS_SetSourceMap(JSRuntime *rt, const char *filename,
+                    const char *map, size_t map_len, const char *map_url)
+{
+    return js_source_maps_set(rt, &rt->source_maps, filename, map, map_len,
+                              map_url);
+}
+
+JS_BOOL JS_DeleteSourceMap(JSRuntime *rt, const char *filename)
+{
+    return js_source_maps_delete(rt, rt->source_maps, filename);
+}
+
+JS_BOOL JS_MapSourcePosition(JSRuntime *rt, const char *filename,
+                             int line_num, int col_num,
+                             const char **psource, int *pline_num,
+                             int *pcol_num)
+{
+    return js_source_maps_lookup(rt, rt->source_maps, filename, line_num,
+                                 col_num, psource, pline_num, pcol_num);
+}
+
+void JS_SetSourceMapFlags(JSRuntime *rt, int flags)
+{
+    rt->source_map_flags = flags;
+}
+
+int JS_GetSourceMapFlags(JSRuntime *rt)
+{
+    return rt->source_map_flags;
+}
+
+void JS_SetSourceMapLoaderFunc(JSRuntime *rt, JSSourceMapLoaderFunc *func,
+                               void *opaque)
+{
+    rt->source_map_loader = func;
+    rt->source_map_loader_opaque = opaque;
+}
+
+/* called before a script or module is compiled by JS_Eval() */
+static void js_source_map_detect(JSContext *ctx, const char *filename,
+                                 const char *input, size_t input_len)
+{
+    JSRuntime *rt = ctx->rt;
+    const char *url;
+    size_t url_len;
+
+    if (!(rt->source_map_flags & JS_SOURCE_MAP_INLINE) &&
+        !rt->source_map_loader)
+        return;
+    url = js_source_map_find_url(input, input_len, &url_len);
+    if (!url)
+        return;
+    if (js_source_map_is_data_url(url, url_len)) {
+        char *buf;
+        size_t len;
+        if (!(rt->source_map_flags & JS_SOURCE_MAP_INLINE))
+            return;
+        if (js_source_map_decode_data_url(rt, url, url_len, &buf, &len) == 0) {
+            js_source_maps_set(rt, &rt->source_maps, filename, buf, len, NULL);
+            js_free_rt(rt, buf);
+        }
+    } else if (rt->source_map_loader) {
+        char *url_str = js_malloc_rt(rt, url_len + 1);
+        if (!url_str)
+            return;
+        memcpy(url_str, url, url_len);
+        url_str[url_len] = '\0';
+        rt->source_map_loader(ctx, filename, url_str,
+                              rt->source_map_loader_opaque);
+        js_free_rt(rt, url_str);
+    }
+}
+
 static int JS_EnqueueJob2(JSContext *ctx, JSJobFunc *job_func,
                           int argc, JSValueConst *argv, BOOL no_exception)
 {
@@ -2428,6 +2507,9 @@ void JS_FreeRuntime(JSRuntime *rt)
     int i;
 
     JS_FreeValueRT(rt, rt->current_exception);
+
+    js_source_maps_free(rt, rt->source_maps);
+    rt->source_maps = NULL;
 
     list_for_each_safe(el, el1, &rt->job_list) {
         JSJobEntry *e = list_entry(el, JSJobEntry, link);
@@ -7631,6 +7713,16 @@ static void build_backtrace(JSContext *ctx, JSValueConst error_obj,
     
     js_dbuf_init(ctx, &dbuf);
     if (filename) {
+        const char *orig_source;
+        int orig_line, orig_col;
+        if (line_num != -1 &&
+            js_source_maps_lookup(ctx->rt, ctx->rt->source_maps, filename,
+                                  line_num, col_num, &orig_source,
+                                  &orig_line, &orig_col)) {
+            filename = orig_source;
+            line_num = orig_line;
+            col_num = orig_col;
+        }
         dbuf_printf(&dbuf, "    at %s", filename);
         if (line_num != -1)
             dbuf_printf(&dbuf, ":%d:%d", line_num, col_num);
@@ -7671,11 +7763,23 @@ static void build_backtrace(JSContext *ctx, JSValueConst error_obj,
 
             b = p->u.func.function_bytecode;
             if (b->has_debug) {
+                const char *orig_source;
+                int orig_line, orig_col;
                 line_num1 = find_line_num(ctx, b,
                                           sf->cur_pc - b->byte_code_buf - 1, &col_num1);
                 atom_str = JS_AtomToCString(ctx, b->debug.filename);
-                dbuf_printf(&dbuf, " (%s",
-                            atom_str ? atom_str : "<null>");
+                if (atom_str && line_num1 != 0 &&
+                    js_source_maps_lookup(ctx->rt, ctx->rt->source_maps,
+                                          atom_str, line_num1, col_num1,
+                                          &orig_source, &orig_line,
+                                          &orig_col)) {
+                    dbuf_printf(&dbuf, " (%s", orig_source);
+                    line_num1 = orig_line;
+                    col_num1 = orig_col;
+                } else {
+                    dbuf_printf(&dbuf, " (%s",
+                                atom_str ? atom_str : "<null>");
+                }
                 JS_FreeCString(ctx, atom_str);
                 if (line_num1 != 0)
                     dbuf_printf(&dbuf, ":%d:%d", line_num1, col_num1);
@@ -37503,10 +37607,13 @@ static JSValue __JS_EvalInternal(JSContext *ctx, JSValueConst this_obj,
     JSFunctionDef *fd;
     JSModuleDef *m;
 
+    eval_type = flags & JS_EVAL_TYPE_MASK;
+    if (eval_type == JS_EVAL_TYPE_GLOBAL || eval_type == JS_EVAL_TYPE_MODULE)
+        js_source_map_detect(ctx, filename, input, input_len);
+
     js_parse_init(ctx, s, input, input_len, filename);
     skip_shebang(&s->buf_ptr, s->buf_end);
 
-    eval_type = flags & JS_EVAL_TYPE_MASK;
     m = NULL;
     if (eval_type == JS_EVAL_TYPE_DIRECT) {
         JSObject *p;

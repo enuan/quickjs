@@ -129,6 +129,11 @@ Advanced options are:
 Make the @code{std} and @code{os} modules available to the loaded
 script even if it is not a module.
 
+@item --source-map
+Use the source maps of the loaded scripts and modules in the
+backtraces: inline @code{data:} URLs and map files referenced by a
+trailing @code{//# sourceMappingURL=} comment (see @ref{Source maps}).
+
 @item -d
 @item --dump
 Dump the memory usage stats.
@@ -911,6 +916,29 @@ callback can be used to implement an execution timeout.
 
 It is used by the command line interpreter to implement a
 @code{Ctrl-C} handler.
+
+@subsection Source maps
+@anchor{Source maps}
+
+Source maps (ECMA-426 version 3, regular and index maps) can be
+associated with the filename given to @code{JS_Eval()} with
+@code{JS_SetSourceMap()}. The positions of the backtraces
+(@code{stack} property) and the @code{fileName}, @code{lineNumber} and
+@code{columnNumber} properties of the syntax errors are then replaced
+by the original positions when the map contains a mapping for them
+(greatest generated column lower or equal on the same generated line);
+otherwise the generated position is kept. Relative @code{sources} are
+resolved against @code{sourceRoot} and the map URL. The maps are
+decoded on first use and an invalid map is ignored. Columns are counted
+in UTF-16 code units.
+
+The engine does not read files. With the @code{JS_SOURCE_MAP_INLINE}
+flag (@code{JS_SetSourceMapFlags()}), the inline maps of the
+@code{//# sourceMappingURL=data:application/json...} comments are
+registered when a script or a module is compiled. The other URLs are
+given to the loader set with @code{JS_SetSourceMapLoaderFunc()};
+@code{js_std_source_map_loader()} of @file{quickjs-libc} reads local
+map files. @code{JS_MapSourcePosition()} maps a single position.
 
 @chapter Internals
 

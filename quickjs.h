@@ -968,6 +968,46 @@ void JS_SetCanBlock(JSRuntime *rt, JS_BOOL can_block);
 void JS_SetStripInfo(JSRuntime *rt, int flags);
 int JS_GetStripInfo(JSRuntime *rt);
 
+/* Source maps (ECMA-426 v3, regular and index maps).
+
+   A source map is associated with the filename given to JS_Eval(). The
+   positions of the backtraces ('stack' property) and of the 'fileName',
+   'lineNumber' and 'columnNumber' properties of syntax errors are replaced
+   by the original ones when the map has a mapping for them; otherwise the
+   generated position is kept. Maps are decoded on first use and an invalid
+   map is ignored. They are owned by the runtime. Columns are counted in
+   UTF-16 code units as in source maps. */
+
+/* register (or replace) the source map 'map' (JSON text) of 'filename'.
+   Relative 'sources' are resolved against 'map_url' (the URL or path of
+   the map); map_url = NULL means 'filename'. Return -1 if out of memory. */
+int JS_SetSourceMap(JSRuntime *rt, const char *filename,
+                    const char *map, size_t map_len, const char *map_url);
+/* return TRUE if a source map was registered for 'filename' */
+JS_BOOL JS_DeleteSourceMap(JSRuntime *rt, const char *filename);
+/* map a generated position (1-based line and column). Return TRUE and the
+   1-based original position if mapped. *psource is valid until the source
+   map of 'filename' is replaced or deleted. */
+JS_BOOL JS_MapSourcePosition(JSRuntime *rt, const char *filename,
+                             int line_num, int col_num,
+                             const char **psource, int *pline_num,
+                             int *pcol_num);
+
+/* when a script or module is compiled with JS_Eval(), look for a trailing
+   '//# sourceMappingURL=' comment and register the source map of inline
+   'data:application/json' URLs */
+#define JS_SOURCE_MAP_INLINE (1 << 0)
+void JS_SetSourceMapFlags(JSRuntime *rt, int flags);
+int JS_GetSourceMapFlags(JSRuntime *rt);
+
+/* called when a script or module compiled with JS_Eval() has a trailing
+   '//# sourceMappingURL=' comment whose URL is not a data: URL. The loader
+   may call JS_SetSourceMap(). It must not throw exceptions. */
+typedef void JSSourceMapLoaderFunc(JSContext *ctx, const char *filename,
+                                   const char *url, void *opaque);
+void JS_SetSourceMapLoaderFunc(JSRuntime *rt, JSSourceMapLoaderFunc *func,
+                               void *opaque);
+
 /* set the [IsHTMLDDA] internal slot */
 void JS_SetIsHTMLDDA(JSContext *ctx, JSValueConst obj);
 
